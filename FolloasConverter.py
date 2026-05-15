@@ -11,8 +11,10 @@ import tempfile
 import shutil
 from contextlib import contextmanager
 import sys
+import subprocess
+import ctypes
 
-VERSION = "V1.09 2026/05/03"
+VERSION = "V1.22 2026/05/16"
 
 class FolloasConverterApp:
     def __init__(self, root):
@@ -40,14 +42,34 @@ class FolloasConverterApp:
             # 引数を取得し、前後の空白除去とパスの正規化を行う
             input_path = os.path.normpath(os.path.abspath(sys.argv[1].strip()))
             
+            # デバッグ用: 受け取ったパスを表示
+            print(f"DEBUG: Received path = {input_path}")
+            
             if os.path.isdir(input_path):
+                print(f"DEBUG: Directory confirmed.")
                 self.target_dir.set(input_path)
                 self.batch_mode = True
                 # GUIが完全に構築されるのを少し待ってから開始
                 self.root.after(500, self.start_conversion)
             else:
-                print(f"Error: Directory not found - {input_path}")
+                error_msg = f"Error: Directory not found or invalid path - {input_path}"
+                print(error_msg)
+                # バッチモードでもエラー時はダイアログを出して知らせる
+                messagebox.showerror("起動エラー", error_msg)
                 self.root.after(100, self.root.destroy)
+
+        # IME無効化 (Windowsのみ)
+        if sys.platform == "win32":
+            self.root.after(200, self._disable_ime)
+
+    def _disable_ime(self):
+        """WindowsのIMEを無効化する"""
+        try:
+            # 自身のウィンドウハンドルを取得してIMEを関連付け解除
+            hwnd = self.root.winfo_id()
+            ctypes.windll.imm32.ImmAssociateContext(hwnd, 0)
+        except:
+            pass
 
     def _setup_ui(self):
         # フォルダ選択セクション
@@ -98,32 +120,40 @@ class FolloasConverterApp:
         else:
             self.root.after(0, lambda: messagebox.showinfo(title, message))
 
-    @contextmanager
-    def _video_capture_context(self, video_path):
-        """OpenCVの日本語パス問題を回避するためのコンテキストマネージャ"""
-        temp_file = None
-        cap = None
+    def _get_video_info(self, video_path):
+        """ffprobe/ffmpegを使用して動画の情報を取得する"""
         try:
-            # パスに日本語が含まれているかチェック
-            has_unicode = any(ord(c) > 127 for c in video_path)
-            if has_unicode and os.path.exists(video_path):
-                suffix = os.path.splitext(video_path)[1]
-                fd, temp_path = tempfile.mkstemp(suffix=suffix)
-                os.close(fd)
-                shutil.copy2(video_path, temp_path)
-                temp_file = temp_path
-                cap = cv2.VideoCapture(temp_path)
-            else:
-                cap = cv2.VideoCapture(video_path)
-            yield cap
-        finally:
-            if cap is not None:
-                cap.release()
-            if temp_file is not None and os.path.exists(temp_file):
+            # ffprobeを優先的に使用
+            cmd = ["ffprobe", "-v", "error", "-select_streams", "v:0", 
+                   "-show_entries", "stream=nb_frames,duration,avg_frame_rate", 
+                   "-of", "default=noprint_wrappers=1:nokey=1", video_path]
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            lines = result.stdout.strip().split('\n')
+            if len(lines) >= 3:
+                # 順序: avg_frame_rate, duration, nb_frames
+                # ただしTSファイルはnb_framesが取れないことが多い
+                rate_str = lines[0]
+                dur_str = lines[1]
+                frames_str = lines[2]
+                
+                # フレームレート計算 (例: 30/1)
+                if '/' in rate_str:
+                    num, den = map(float, rate_str.split('/'))
+                    fps = num / den
+                else:
+                    fps = float(rate_str)
+                
+                duration = float(dur_str)
+                # nb_framesがN/Aの場合はduration * fpsで計算
                 try:
-                    os.remove(temp_file)
+                    total_frames = int(frames_str)
                 except:
-                    pass
+                    total_frames = int(duration * fps)
+                
+                return total_frames, fps, duration
+        except:
+            pass
+        return 0, 30.0, 0.0
 
     def cancel_conversion(self):
         if self.is_running:
@@ -202,82 +232,110 @@ class FolloasConverterApp:
 
     def _extract_frames(self, video_path, output_dir, prefix, src_fps, target_fps, target_total_frames=None):
         if not os.path.exists(video_path):
-            self._show_message("warning", "警告", f"{os.path.basename(video_path)} が見つかりません。")
+            msg = f"動画ファイルが見つかりません:\n{os.path.basename(video_path)}\n\n(フルパス: {video_path})"
+            print(f"WARNING: {msg}")
+            self._show_message("warning", "ファイル未発見", msg)
             return target_total_frames if target_total_frames is not None else 0
 
-        with self._video_capture_context(video_path) as cap:
-            if cap is None or not cap.isOpened():
-                self._show_message("error", "エラー", f"動画ファイルを開けませんでした: {os.path.basename(video_path)}")
-                return target_total_frames if target_total_frames is not None else 0
+        # FFmpegコマンドの構築
+        # -vf fps=... でフレームレートを調整しつつ抽出
+        out_pattern = os.path.join(output_dir, f"{prefix}_%06d.jpg")
+        
+        # まず動画の長さを取得
+        total_frames_est, fps_actual, duration = self._get_video_info(video_path)
+        
+        # 実際に書き出すべき枚数
+        if target_total_frames is None:
+            # 初回(live1)の場合、FFmpegに任せた結果をカウントする
+            actual_target_fps = target_fps
+        else:
+            # 2回目(live2)の場合、基準(live1)の枚数に合わせる必要がある
+            # durationから計算するか、あるいはFFmpegのfps指定で合わせる
+            actual_target_fps = target_fps
 
-            src_total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            total_frames: int = src_total_frames if target_total_frames is None else target_total_frames
+        cmd = [
+            "ffmpeg", "-y", "-i", video_path,
+            "-vf", f"fps={actual_target_fps}",
+            "-q:v", "2", # 高画質(2-5程度)
+            out_pattern
+        ]
 
-            ratio = src_fps / target_fps
-            current_src_idx: int = -1
-            frame = None
-
-            for target_idx in range(total_frames):
+        try:
+            # 進捗取得のために標準エラーを監視
+            process = subprocess.Popen(cmd, stderr=subprocess.PIPE, universal_newlines=True, encoding='utf-8')
+            
+            # stderrから "frame=  123" という文字列を探して進捗更新
+            for line in process.stderr:
+                if "frame=" in line:
+                    try:
+                        # "frame=  123 fps=..." から数値を抽出
+                        parts = line.split("frame=")[1].split()
+                        if parts:
+                            current_frame = int(parts[0])
+                            # 進捗率計算 (だいたいの目安)
+                            if total_frames_est > 0:
+                                prog = (current_frame / total_frames_est) * 100
+                                self._update_progress(min(prog, 99.0))
+                    except:
+                        pass
                 if self.cancel_requested:
+                    process.terminate()
                     break
-
-                calc_src_idx = int(round(target_idx * ratio))
-                calc_src_idx = min(calc_src_idx, src_total_frames - 1)
-
-                while current_src_idx < calc_src_idx:
-                    ret, frame = cap.read()
-                    if not ret:
-                        break
-                    current_src_idx = current_src_idx + 1  # type: ignore
-
-                if frame is not None:
-                    out_path = os.path.join(output_dir, f"{prefix}_{target_idx:06d}.jpg")
-                    # 高画質JPG & 日本語パス対応の保存
-                    result, encimg = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
-                    if result:
-                        with open(out_path, 'wb') as f:
-                            encimg.tofile(f)
-
-                if target_idx % 50 == 0:
-                    self._update_progress((target_idx / total_frames) * 100)  # type: ignore
-
-        return total_frames
+            
+            process.wait()
+            
+            # 実際に生成されたファイル数を数えて、正確なフレーム数を返す
+            files = [f for f in os.listdir(output_dir) if f.startswith(prefix) and f.endswith(".jpg")]
+            # ファイル名を 0 から始めるためにリネームが必要な場合があるが、
+            # ffmpegの %06d は 1 から始まるため、0 からに直す
+            # (オリジナルの仕様が 000000.jpg からなら、一括リネーム)
+            
+            all_files = sorted(files)
+            for i, old_name in enumerate(all_files):
+                new_name = f"{prefix}_{i:06d}.jpg"
+                if old_name != new_name:
+                    os.rename(os.path.join(output_dir, old_name), os.path.join(output_dir, new_name))
+            
+            return len(all_files)
+        except Exception as e:
+            self._show_message("error", "エラー", f"FFmpeg実行中にエラーが発生しました:\n{str(e)}")
+            return 0
 
     def _extract_meta_only(self, video_path, output_dir):
-        """ScreenCaptureから絶対座標でパラメータ部分だけを切り抜いて保存する"""
-        self._update_progress(50)
+        """ScreenCaptureからパラメータ部分を抽出する (FFmpeg + OpenCV)"""
+        if not os.path.exists(video_path): return
 
-        if not os.path.exists(video_path):
-            self._show_message("warning", "警告", f"{os.path.basename(video_path)} が見つかりません。")
-            self._update_progress(100)
-            return
-
-        with self._video_capture_context(video_path) as cap:
-            if cap is None or not cap.isOpened():
-                self._show_message("error", "エラー", f"動画ファイルを開けませんでした: {os.path.basename(video_path)}")
-                self._update_progress(100)
-                return
-
-            # ブラックアウト対策として、15フレーム（約1秒分）読み飛ばす
-            ret = False
-            frame = None
-            for _ in range(15):
-                ret, frame = cap.read()
-                if not ret:
-                    break
-
-            if ret and frame is not None:
-                # ユーザー指定の絶対座標で切り抜き [y1:y2, x1:x2]
-                cropped_meta = frame[760:875, 440:715]
-                meta_path = os.path.join(output_dir, "meta_info_panel.png")
-
-                # 日本語パス対応のPNG保存
-                result, encimg = cv2.imencode('.png', cropped_meta)
-                if result:
-                    with open(meta_path, 'wb') as f:
-                        encimg.tofile(f)
-
-        self._update_progress(100)
+        # 1フレームだけ抜き出す (漢字パス問題を避けるため、システムのTempフォルダを使用)
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tf:
+            temp_jpg = tf.name
+        
+        cmd = ["ffmpeg", "-y", "-i", video_path, "-ss", "0.5", "-vframes", "1", temp_jpg]
+        try:
+            # FFmpegで画像を出力
+            subprocess.run(cmd, capture_output=True, check=True)
+            
+            if os.path.exists(temp_jpg):
+                # 日本語パス対応の読み込み方式
+                with open(temp_jpg, 'rb') as f:
+                    n = np.frombuffer(f.read(), np.uint8)
+                    frame = cv2.imdecode(n, cv2.IMREAD_COLOR)
+                
+                if frame is not None:
+                    # オリジナルの座標で切り抜き
+                    cropped_meta = frame[760:875, 440:715]
+                    meta_path = os.path.join(output_dir, "meta_info_panel.png")
+                    
+                    # 日本語パス対応の保存
+                    result, encimg = cv2.imencode('.png', cropped_meta)
+                    if result:
+                        with open(meta_path, 'wb') as f:
+                            encimg.tofile(f)
+        except Exception as e:
+            print(f"Meta extraction error: {e}")
+        finally:
+            if os.path.exists(temp_jpg):
+                try: os.remove(temp_jpg)
+                except: pass
 
     def _sync_log(self, log_path: str, output_dir: str, total_frames_30fps: int):
         if not os.path.exists(log_path):
