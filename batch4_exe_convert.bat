@@ -1,0 +1,17 @@
+cd /d %~dp0
+.\dist\FolloasConverter\FolloasConverter.exe "I:\260424\3ÃÞ¯·°02_260424_141328_ViewReady"
+.\dist\FolloasConverter\FolloasConverter.exe "I:\260424\S4deck_260424_095937_ViewReady"
+.\dist\FolloasConverter\FolloasConverter.exe "I:\260424\S5deck-0.2_260424_134003_ViewReady"
+.\dist\FolloasConverter\FolloasConverter.exe "I:\260424\s5deck-0.2-—Î_260424_141135_ViewReady"
+.\dist\FolloasConverter\FolloasConverter.exe "I:\260424\S5ƒfƒbƒL_260424_094327_ViewReady"
+.\dist\FolloasConverter\FolloasConverter.exe "I:\260424\S5ƒfƒbƒL_260424_100506_ViewReady"
+.\dist\FolloasConverter\FolloasConverter.exe "I:\260424\ƒfƒbƒL3_260424_134922_ViewReady"
+.\dist\FolloasConverter\FolloasConverter.exe "I:\260424\˜F3_260424_111848_ViewReady"
+.\dist\FolloasConverter\FolloasConverter.exe "I:\260424\˜F3-0.2_260424_114051_ViewReady"
+.\dist\FolloasConverter\FolloasConverter.exe "I:\260424\˜F4_260424_103426_ViewReady"
+.\dist\FolloasConverter\FolloasConverter.exe "I:\260424\˜F4-0.2_260424_104921_ViewReady"
+.\dist\FolloasConverter\FolloasConverter.exe "I:\260424\˜F502_260424_110322_ViewReady"
+.\dist\FolloasConverter\FolloasConverter.exe "I:\260424\˜F‚T_260424_103414_ViewReady"
+.\dist\FolloasConverter\FolloasConverter.exe "I:\260424\˜F6_260424_111940_ViewReady"
+.\dist\FolloasConverter\FolloasConverter.exe "I:\260424\˜F6-0.2_260424_112627_ViewReady"
+

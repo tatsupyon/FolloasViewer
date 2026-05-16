@@ -1,0 +1,10 @@
+cd /d %~dp0
+.\dist\FolloasConverter\FolloasConverter.exe "K:\TOYOTAè„ãΩÇP\AKE_260115_093607"
+.\dist\FolloasConverter\FolloasConverter.exe "K:\TOYOTAè„ãΩÇP\AKKDEMO20260115_260115_134218"
+.\dist\FolloasConverter\FolloasConverter.exe "K:\TOYOTAè„ãΩÇP\S-3ÉfÉbÉL_260122_085648"
+.\dist\FolloasConverter\FolloasConverter.exe "K:\TOYOTAè„ãΩÇP\S-3ï€éùòF_260122_095336"
+.\dist\FolloasConverter\FolloasConverter.exe "K:\TOYOTAè„ãΩÇP\S-4ÉfÉbÉL_260122_125705"
+.\dist\FolloasConverter\FolloasConverter.exe "K:\TOYOTAè„ãΩÇP\S-4òFë§_260122_123901"
+.\dist\FolloasConverter\FolloasConverter.exe "K:\TOYOTAè„ãΩÇP\S-5ÉfÉbÉL_260122_122644"
+.\dist\FolloasConverter\FolloasConverter.exe "K:\TOYOTAè„ãΩÇP\S-5ï€éùòF_260122_121427"
+.\dist\FolloasConverter\FolloasConverter.exe "K:\TOYOTAè„ãΩÇP\S-6ï€éùòF6_260122_114004"

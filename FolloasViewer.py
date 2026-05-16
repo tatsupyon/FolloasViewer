@@ -15,7 +15,7 @@ import sys
 # ==========================================
 # バージョン定義
 # ==========================================
-VERSION = "V1.58 2026/05/05"
+VERSION = "V1.62 2026/05/16"
 
 # ==========================================
 # 外部モジュール（log_summarizer.py）の完全統合
@@ -119,6 +119,19 @@ class FolloasViewerApp:
             else:
                 print(f"Error: Directory not found - {input_path}")
                 self.root.after(100, self.root.destroy)
+
+        # IME無効化 (Windowsのみ)
+        if sys.platform == "win32":
+            self.root.after(200, self._disable_ime)
+
+    def _disable_ime(self):
+        """WindowsのIMEを無効化する"""
+        try:
+            import ctypes
+            hwnd = self.root.winfo_id()
+            ctypes.windll.imm32.ImmAssociateContext(hwnd, 0)
+        except:
+            pass
 
     def _setup_ui(self):
         # 1. メインキャンバス (1866x880)
@@ -385,29 +398,63 @@ class FolloasViewerApp:
     def browse_folder(self, folder_path=None):
         f = folder_path if folder_path else filedialog.askdirectory()
         if f:
+            f = os.path.normpath(f)
+            print(f"DEBUG: Loading folder = {f}")
             self.target_dir = f
             self.offset_var.set(0); self.offset_live2_var.set(0)
-            # viewer.ini の読み込みは load_config に集約
+            
             meta_p = os.path.join(f, "meta_info_panel.png")
             if os.path.exists(meta_p):
                 img_arr = self._read_img(meta_p); self.tk_meta = ImageTk.PhotoImage(Image.fromarray(cv2.cvtColor(img_arr, cv2.COLOR_BGR2RGB)))
             else: self.tk_meta = None
+            
             csv_p = os.path.join(f, "sync_log.csv")
-            self.total_l1 = len(glob.glob(os.path.join(f, "live1", "*.jpg")))
-            self.total_l2 = len(glob.glob(os.path.join(f, "live2", "*.jpg")))
+            
+            # glob.glob の代わりに os.listdir を使用 (日本語パス対策)
+            def count_jpgs(sub):
+                p = os.path.join(f, sub)
+                print(f"DEBUG: Checking sub-folder: {p}")
+                if not os.path.isdir(p):
+                    print(f"DEBUG: {sub} is NOT a directory or not found.")
+                    return 0
+                files = [name for name in os.listdir(p) if name.lower().endswith(".jpg")]
+                print(f"DEBUG: {sub} contains {len(files)} jpgs.")
+                if len(files) > 0:
+                    print(f"DEBUG: Sample file: {files[0]}")
+                return len(files)
+            
+            self.total_l1 = count_jpgs("live1")
+            self.total_l2 = count_jpgs("live2")
+            print(f"DEBUG: Found Live1={self.total_l1}, Live2={self.total_l2}")
+            
             self.total_frames = self.total_l1
             self.log_data.clear()
             if os.path.exists(csv_p):
-                with open(csv_p, 'r', encoding='utf-8') as fs:
-                    r = csv.reader(fs)
-                    for row in r:
-                        if len(row) >= 2:
+                # エンコーディングのフォールバック
+                lines = []
+                for enc in ['utf-8', 'cp932']:
+                    try:
+                        with open(csv_p, 'r', encoding=enc) as fs:
+                            lines = fs.readlines()
+                        print(f"DEBUG: sync_log.csv loaded with {enc}")
+                        break
+                    except: continue
+                
+                for line in lines:
+                    row = line.strip().split(',')
+                    if len(row) >= 2:
+                        try:
                             bx = [[float(row[i]), int(row[i+1]), int(row[i+2]), int(row[i+3]), int(row[i+4]), int(row[i+5])] for i in range(2, len(row), 6) if i+5 < len(row)]
                             self.log_data[int(row[0])] = {"time": int(row[1]), "boxes": bx}
+                        except: continue
+            
             self.total_log = max(self.log_data.keys()) + 1 if self.log_data else 0
             self.current_frame = 0; self.cut_flags = [False] * self.total_frames; self.current_out = None
-            self.load_config() # フォルダを開いた時に設定を読み込む
+            self.load_config()
             self.update_view()
+            
+            if self.total_frames == 0:
+                messagebox.showwarning("警告", f"画像が見つかりません。\nパスを確認してください:\n{f}")
 
     def toggle_play(self):
         self.is_playing = not self.is_playing

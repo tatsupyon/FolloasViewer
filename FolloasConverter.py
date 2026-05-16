@@ -10,11 +10,12 @@ from typing import Optional
 import tempfile
 import shutil
 from contextlib import contextmanager
+import json
 import sys
 import subprocess
 import ctypes
 
-VERSION = "V1.22 2026/05/16"
+VERSION = "V1.33 2026/05/16"
 
 class FolloasConverterApp:
     def __init__(self, root):
@@ -39,6 +40,7 @@ class FolloasConverterApp:
 
         # 引数チェック
         if len(sys.argv) > 1:
+            self.batch_mode = True
             # 引数を取得し、前後の空白除去とパスの正規化を行う
             input_path = os.path.normpath(os.path.abspath(sys.argv[1].strip()))
             
@@ -48,15 +50,12 @@ class FolloasConverterApp:
             if os.path.isdir(input_path):
                 print(f"DEBUG: Directory confirmed.")
                 self.target_dir.set(input_path)
-                self.batch_mode = True
                 # GUIが完全に構築されるのを少し待ってから開始
                 self.root.after(500, self.start_conversion)
             else:
-                error_msg = f"Error: Directory not found or invalid path - {input_path}"
-                print(error_msg)
-                # バッチモードでもエラー時はダイアログを出して知らせる
-                messagebox.showerror("起動エラー", error_msg)
+                self._show_message("error", "起動エラー", f"Error: Directory not found or invalid path - {input_path}")
                 self.root.after(100, self.root.destroy)
+                return
 
         # IME無効化 (Windowsのみ)
         if sys.platform == "win32":
@@ -113,6 +112,11 @@ class FolloasConverterApp:
         self.root.after(0, lambda: self.progress_var.set(value))
 
     def _show_message(self, type, title, message):
+        if self.batch_mode:
+            # バッチモード時はポップアップを出さず、標準エラー出力に表示する
+            print(f"\n[{type.upper()}] {title}: {message}", file=sys.stderr)
+            return
+
         if type == "error":
             self.root.after(0, lambda: messagebox.showerror(title, message))
         elif type == "warning":
@@ -121,39 +125,95 @@ class FolloasConverterApp:
             self.root.after(0, lambda: messagebox.showinfo(title, message))
 
     def _get_video_info(self, video_path):
-        """ffprobe/ffmpegを使用して動画の情報を取得する"""
+        """ffprobeを使用して動画の情報を取得する"""
         try:
-            # ffprobeを優先的に使用
-            cmd = ["ffprobe", "-v", "error", "-select_streams", "v:0", 
-                   "-show_entries", "stream=nb_frames,duration,avg_frame_rate", 
-                   "-of", "default=noprint_wrappers=1:nokey=1", video_path]
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            lines = result.stdout.strip().split('\n')
-            if len(lines) >= 3:
-                # 順序: avg_frame_rate, duration, nb_frames
-                # ただしTSファイルはnb_framesが取れないことが多い
-                rate_str = lines[0]
-                dur_str = lines[1]
-                frames_str = lines[2]
-                
-                # フレームレート計算 (例: 30/1)
+            video_path = os.path.abspath(video_path)
+            v_dir = os.path.dirname(video_path)
+            v_name = os.path.basename(video_path)
+
+            # 漢字パス対策: 作業ディレクトリを動画の場所に移動して実行
+            cmd = ["ffprobe", "-v", "error", "-select_streams", "v:0",
+                   "-show_entries", "stream=nb_frames,duration,avg_frame_rate",
+                   "-of", "json", v_name]
+            
+            # Windowsで新しいコンソールウィンドウを開かないように設定
+            creationflags = 0
+            if sys.platform == "win32":
+                creationflags = 0x08000000 # CREATE_NO_WINDOW
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd=v_dir, 
+                                  encoding='utf-8', errors='replace',
+                                  creationflags=creationflags)
+            data = json.loads(result.stdout)
+            
+            if 'streams' in data and len(data['streams']) > 0:
+                s = data['streams'][0]
+                fps = 30.0
+                rate_str = s.get('avg_frame_rate', '30/1')
                 if '/' in rate_str:
                     num, den = map(float, rate_str.split('/'))
-                    fps = num / den
+                    if den != 0: fps = num / den
                 else:
                     fps = float(rate_str)
                 
-                duration = float(dur_str)
-                # nb_framesがN/Aの場合はduration * fpsで計算
-                try:
-                    total_frames = int(frames_str)
-                except:
-                    total_frames = int(duration * fps)
+                duration = float(s.get('duration', 0))
+                if duration == 0:
+                    # ストリームから取れない場合はコンテナ(format)から取得を試みる
+                    duration = float(data.get('format', {}).get('duration', 0))
                 
-                return total_frames, fps, duration
-        except:
-            pass
+                nb_frames = int(s.get('nb_frames', 0))
+                
+                # nb_framesが0の場合は推定
+                if nb_frames == 0 and duration > 0:
+                    nb_frames = int(duration * fps)
+                
+                return nb_frames, fps, duration
+        except Exception as e:
+            print(f"DEBUG: _get_video_info error: {e}")
         return 0, 30.0, 0.0
+
+    def _find_video_file(self, input_dir, base_name, extensions=[".ts", ".mp4", ".mkv"]):
+        """指定されたベース名と拡張子の組み合わせでファイルを探す"""
+        for ext in extensions:
+            path = os.path.join(input_dir, base_name + ext)
+            if os.path.exists(path):
+                return path
+        return None
+
+    def _strip_ts_payload(self, ts_path, out_mjpg_path, target_pid=0x64):
+        """TSファイルから特定のPIDのペイロードを抽出し、MJPEGストリームとして保存する。
+        同時に含まれるJPEGの数をカウントして返す。"""
+        jpeg_count = 0
+        try:
+            print(f"DEBUG: Stripping TS headers from {os.path.basename(ts_path)} (Target PID: {hex(target_pid)})")
+            with open(ts_path, 'rb') as f_in, open(out_mjpg_path, 'wb') as f_out:
+                while True:
+                    packet = f_in.read(188)
+                    if len(packet) < 188: break
+                    
+                    if packet[0] != 0x47:
+                        f_in.seek(-187, 1)
+                        continue
+                    
+                    pid = ((packet[1] & 0x1f) << 8) | packet[2]
+                    
+                    if pid == target_pid:
+                        afc = (packet[3] & 0x30) >> 4
+                        header_len = 4
+                        if afc == 0x00 or afc == 0x02: continue
+                        if afc == 0x03:
+                            af_len = packet[4]
+                            header_len = 5 + af_len
+                        
+                        if header_len < 188:
+                            payload = packet[header_len:]
+                            # JPEG開始マーカー (FF D8) をカウント
+                            jpeg_count += payload.count(b'\xff\xd8')
+                            f_out.write(payload)
+            return jpeg_count
+        except Exception as e:
+            print(f"DEBUG: _strip_ts_payload error: {e}")
+            return 0
 
     def cancel_conversion(self):
         if self.is_running:
@@ -189,11 +249,17 @@ class FolloasConverterApp:
             os.makedirs(live1_dir, exist_ok=True)
             os.makedirs(live2_dir, exist_ok=True)
 
-            # 各種ファイルパスの推定
-            live1_path = os.path.join(input_dir, f"{folder_name}_vlc_record_live1.ts")
-            live2_path = os.path.join(input_dir, f"{folder_name}_vlc_record_live2.ts")
-            screen_path = os.path.join(input_dir, f"{folder_name}_screen_capture.mkv")
+            # 各種ファイルパスの推定（拡張子 .ts / .mp4 両対応）
+            live1_path = self._find_video_file(input_dir, f"{folder_name}_vlc_record_live1")
+            live2_path = self._find_video_file(input_dir, f"{folder_name}_vlc_record_live2")
+            screen_path = self._find_video_file(input_dir, f"{folder_name}_screen_capture", [".mkv", ".mp4"])
             log_path = os.path.join(input_dir, f"{folder_name}_head.log")
+
+            if not live1_path:
+                # フォールバック: 単純なファイル名チェック
+                msg = f"Live1ファイルが見つかりません。以下のような名前であることを確認してください:\n{folder_name}_vlc_record_live1.ts または .mp4"
+                self._show_message("error", "ファイル不足", msg)
+                return
 
             # 1. Live1 (30fps) の展開を基準とする
             self._update_status("1/4: Live1 (30fps基準) の静止画抽出中...")
@@ -222,7 +288,8 @@ class FolloasConverterApp:
             # 完了処理
             self._update_status("変換完了！ VIEWERで読み込めます。")
             self._update_progress(100)
-            self._show_message("info", "完了", f"変換が正常に完了しました。\n作業フォルダ: {output_dir}")
+            if not self.batch_mode:
+                self._show_message("info", "完了", f"変換が正常に完了しました。\n作業フォルダ: {output_dir}")
 
         except Exception as e:
             self._show_message("error", "エラー", f"処理中にエラーが発生しました:\n{str(e)}")
@@ -237,69 +304,147 @@ class FolloasConverterApp:
             self._show_message("warning", "ファイル未発見", msg)
             return target_total_frames if target_total_frames is not None else 0
 
-        # FFmpegコマンドの構築
-        # -vf fps=... でフレームレートを調整しつつ抽出
-        out_pattern = os.path.join(output_dir, f"{prefix}_%06d.jpg")
+        # パスの正規化
+        video_path = os.path.abspath(video_path)
+        output_dir = os.path.abspath(output_dir)
+        v_dir = os.path.dirname(video_path)
+        v_name = os.path.basename(video_path)
         
-        # まず動画の長さを取得
+        # まず動画の情報を取得
         total_frames_est, fps_actual, duration = self._get_video_info(video_path)
-        
-        # 実際に書き出すべき枚数
-        if target_total_frames is None:
-            # 初回(live1)の場合、FFmpegに任せた結果をカウントする
-            actual_target_fps = target_fps
-        else:
-            # 2回目(live2)の場合、基準(live1)の枚数に合わせる必要がある
-            # durationから計算するか、あるいはFFmpegのfps指定で合わせる
-            actual_target_fps = target_fps
+        actual_target_fps = target_fps
 
-        cmd = [
-            "ffmpeg", "-y", "-i", video_path,
+        # 出力パターン（相対パスで使用するために調整）
+        # FFmpegをv_dirで実行するため、output_dirを相対パスにする
+        rel_output_dir = os.path.relpath(output_dir, v_dir)
+        out_pattern = os.path.join(rel_output_dir, f"{prefix}_%06d.jpg")
+
+        # 1回目の標準的なコマンド (TSデマクサ使用)
+        # -fflags +genpts+igndts: タイムスタンプの修復
+        # -max_interleave_delta 0: TSのパケット順序問題を無視
+        cmd1 = [
+            "ffmpeg", "-y", 
+            "-probesize", "100M", "-analyzeduration", "100M",
+            "-fflags", "+genpts+igndts",
+            "-i", v_name,
             "-vf", f"fps={actual_target_fps}",
-            "-q:v", "2", # 高画質(2-5程度)
+            "-q:v", "2",
+            "-max_interleave_delta", "0",
+            "-err_detect", "ignore_err",
             out_pattern
         ]
 
-        try:
-            # 進捗取得のために標準エラーを監視
-            process = subprocess.Popen(cmd, stderr=subprocess.PIPE, universal_newlines=True, encoding='utf-8')
+        # 2回目のフォールバックコマンド（強制MJPEG）
+        cmd2 = [
+            "ffmpeg", "-y",
+            "-f", "mjpeg",
+            "-i", v_name,
+            "-vf", f"fps={actual_target_fps}",
+            "-q:v", "2",
+            out_pattern
+        ]
+
+        def run_cmd(cmd_args):
+            try:
+                # Windowsで新しいコンソールウィンドウを開かないように設定
+                creationflags = 0
+                if sys.platform == "win32":
+                    creationflags = 0x08000000 # CREATE_NO_WINDOW
+
+                print(f"DEBUG: Running FFmpeg: {' '.join(cmd_args)}")
+                process = subprocess.Popen(cmd_args, stderr=subprocess.PIPE, universal_newlines=True, 
+                                          encoding='cp932', errors='replace', cwd=v_dir,
+                                          creationflags=creationflags)
+                ffmpeg_log = []
+                for line in process.stderr:
+                    ffmpeg_log.append(line.strip())
+                    if "frame=" in line:
+                        try:
+                            parts = line.split("frame=")[1].split()
+                            if parts:
+                                current_frame = int(parts[0])
+                                if total_frames_est > 0:
+                                    prog = (current_frame / total_frames_est) * 100
+                                    self._update_progress(min(prog, 99.0))
+                        except: pass
+                    if self.cancel_requested:
+                        process.terminate()
+                        break
+                process.wait()
+                
+                files = [f for f in os.listdir(output_dir) if f.startswith(prefix) and f.endswith(".jpg")]
+                all_files = sorted(files)
+                # 連番のリネーム (1-indexed -> 0-indexed)
+                for i, old_name in enumerate(all_files):
+                    new_name = f"{prefix}_{i:06d}.jpg"
+                    if old_name != new_name:
+                        try:
+                            os.rename(os.path.join(output_dir, old_name), os.path.join(output_dir, new_name))
+                        except: pass
+                return len(all_files), ffmpeg_log, process.returncode
+            except Exception as e:
+                return 0, [str(e)], -1
+
+        # 高速化: ffprobeですでに「未知」とわかっている場合はこの段階をスキップする
+        ret1 = -1
+        count = 0
+        if total_frames_est > 0:
+            count, log1, ret1 = run_cmd(cmd1)
+        else:
+            print(f"DEBUG: Unknown format detected by ffprobe. Skipping standard FFmpeg pass.")
+        
+        # リトライ判定: エラー終了、または極端に枚数が少ない場合 (推定の10%未満かつ100枚未満など)
+        suspiciously_low = (total_frames_est > 0 and count < total_frames_est * 0.5 and count < 100)
+        
+        if (ret1 != 0 or suspiciously_low or total_frames_est == 0) and not self.cancel_requested:
+            if total_frames_est > 0:
+                print(f"DEBUG: FFmpeg failed or produced suspicious result (count={count}, ret={ret1}). Retrying with fallback...")
             
-            # stderrから "frame=  123" という文字列を探して進捗更新
-            for line in process.stderr:
-                if "frame=" in line:
-                    try:
-                        # "frame=  123 fps=..." から数値を抽出
-                        parts = line.split("frame=")[1].split()
-                        if parts:
-                            current_frame = int(parts[0])
-                            # 進捗率計算 (だいたいの目安)
-                            if total_frames_est > 0:
-                                prog = (current_frame / total_frames_est) * 100
-                                self._update_progress(min(prog, 99.0))
-                    except:
-                        pass
-                if self.cancel_requested:
-                    process.terminate()
-                    break
+            # 既存のファイルを掃除（中途半端なファイルを消す）
+            for f in os.listdir(output_dir):
+                if f.startswith(prefix) and f.endswith(".jpg"):
+                    try: os.remove(os.path.join(output_dir, f))
+                    except: pass
             
-            process.wait()
-            
-            # 実際に生成されたファイル数を数えて、正確なフレーム数を返す
-            files = [f for f in os.listdir(output_dir) if f.startswith(prefix) and f.endswith(".jpg")]
-            # ファイル名を 0 から始めるためにリネームが必要な場合があるが、
-            # ffmpegの %06d は 1 から始まるため、0 からに直す
-            # (オリジナルの仕様が 000000.jpg からなら、一括リネーム)
-            
-            all_files = sorted(files)
-            for i, old_name in enumerate(all_files):
-                new_name = f"{prefix}_{i:06d}.jpg"
-                if old_name != new_name:
-                    os.rename(os.path.join(output_dir, old_name), os.path.join(output_dir, new_name))
-            
-            return len(all_files)
-        except Exception as e:
-            self._show_message("error", "エラー", f"FFmpeg実行中にエラーが発生しました:\n{str(e)}")
-            return 0
+            # --- 改善: TSパケットから直接ペイロードを抽出してリトライ ---
+            if video_path.lower().endswith(".ts"):
+                with tempfile.NamedTemporaryFile(suffix=".mjpg", delete=False) as tf:
+                    temp_mjpg = tf.name
+                
+                # パケット抽出と同時に正確なフレーム数をカウント
+                actual_count = self._strip_ts_payload(video_path, temp_mjpg)
+                if actual_count > 0:
+                    # 正確なフレーム数が判明したので更新 (これでプログレスバーが動く)
+                    total_frames_est = actual_count
+                    
+                    # 抽出した生MJPEGストリームに対して再度FFmpegを実行
+                    # (今度は相対パスではなく絶対パスで安全に処理)
+                    cmd3 = [
+                        "ffmpeg", "-y",
+                        "-f", "mjpeg",
+                        "-i", temp_mjpg,
+                        "-vf", f"fps={actual_target_fps}",
+                        "-q:v", "2",
+                        out_pattern
+                    ]
+                    print(f"DEBUG: Retrying with stripped MJPEG stream...")
+                    count, log3, ret3 = run_cmd(cmd3)
+                    
+                    # 一時ファイルの削除
+                    try: os.remove(temp_mjpg)
+                    except: pass
+                    
+                    if count > 0:
+                        return count
+
+            # --- 最終フォールバック: 強制MJPEG (元のファイルに対して) ---
+            count, log2, ret2 = run_cmd(cmd2)
+            if count == 0:
+                print(f"DEBUG: Fallback also failed.")
+                for log_line in log2[-15:]:
+                    print(log_line)
+
+        return count
 
     def _extract_meta_only(self, video_path, output_dir):
         """ScreenCaptureからパラメータ部分を抽出する (FFmpeg + OpenCV)"""
@@ -447,7 +592,7 @@ class FolloasConverterApp:
         self._update_status("キャンセルされました")
         self._update_progress(0)
         if self.batch_mode:
-            self.root.after(1000, self.root.destroy)
+            self.root.after(0, self.root.quit)
         else:
             self._show_message("warning", "キャンセル", "変換処理が中断されました。")
         self.root.after(0, self._reset_ui)
@@ -459,7 +604,6 @@ class FolloasConverterApp:
         else:
             self.btn_start.config(state=tk.NORMAL)
             self.btn_cancel.config(state=tk.DISABLED)
-            self._show_message("info", "完了", "変換処理がすべて完了しました！")
 
 if __name__ == "__main__":
     root = tk.Tk()
