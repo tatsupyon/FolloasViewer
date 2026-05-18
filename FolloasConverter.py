@@ -15,7 +15,7 @@ import sys
 import subprocess
 import ctypes
 
-VERSION = "V1.33 2026/05/16"
+VERSION = "V1.34 2026/05/18"
 
 class FolloasConverterApp:
     def __init__(self, root):
@@ -241,6 +241,21 @@ class FolloasConverterApp:
             input_dir = os.path.normpath(input_dir)
             folder_name = os.path.basename(input_dir)
             output_dir = f"{input_dir}_ViewReady"
+            
+            # 変換開始前に既存の出力フォルダをクリーンアップ（ただし viewer.ini は残す）
+            if os.path.exists(output_dir):
+                for item in os.listdir(output_dir):
+                    if item.lower() == "viewer.ini":
+                        continue
+                    item_path = os.path.join(output_dir, item)
+                    try:
+                        if os.path.isdir(item_path):
+                            shutil.rmtree(item_path, ignore_errors=True)
+                        else:
+                            os.remove(item_path)
+                    except Exception:
+                        pass
+                
             os.makedirs(output_dir, exist_ok=True)
 
             # サブフォルダの作成
@@ -338,6 +353,7 @@ class FolloasConverterApp:
         cmd2 = [
             "ffmpeg", "-y",
             "-f", "mjpeg",
+            "-framerate", str(src_fps),
             "-i", v_name,
             "-vf", f"fps={actual_target_fps}",
             "-q:v", "2",
@@ -422,6 +438,7 @@ class FolloasConverterApp:
                     cmd3 = [
                         "ffmpeg", "-y",
                         "-f", "mjpeg",
+                        "-framerate", str(src_fps),
                         "-i", temp_mjpg,
                         "-vf", f"fps={actual_target_fps}",
                         "-q:v", "2",

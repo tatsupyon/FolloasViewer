@@ -15,7 +15,7 @@ import sys
 # ==========================================
 # バージョン定義
 # ==========================================
-VERSION = "V1.62 2026/05/16"
+VERSION = "V1.63 2026/05/18"
 
 # ==========================================
 # 外部モジュール（log_summarizer.py）の完全統合
@@ -164,7 +164,7 @@ class FolloasViewerApp:
         self.offset_var = tk.IntVar(value=0)
         ana_stack = tk.Frame(self.ana_unit, bg='#f0f0f0'); ana_stack.pack(side=tk.LEFT, padx=2)
         tk.Entry(ana_stack, textvariable=self.offset_var, width=5, justify='center').pack()
-        tk.Scale(ana_stack, from_=-199, to=199, orient=tk.HORIZONTAL, variable=self.offset_var, length=150, showvalue=False, command=self._on_offset_change).pack()
+        tk.Scale(ana_stack, from_=-9999, to=9999, orient=tk.HORIZONTAL, variable=self.offset_var, length=150, showvalue=False, command=self._on_offset_change).pack()
         tk.Button(self.ana_unit, text="▶", width=3, command=lambda: self.adjust_offset("log", 1)).pack(side=tk.LEFT, padx=2)
 
         # Live1枠表示用チェックボックス追加 (Y=745, X=729)
@@ -197,7 +197,7 @@ class FolloasViewerApp:
         self.offset_live2_var = tk.IntVar(value=0)
         l2_stack = tk.Frame(self.l2_unit, bg='#f0f0f0'); l2_stack.pack(side=tk.LEFT, padx=2)
         tk.Entry(l2_stack, textvariable=self.offset_live2_var, width=5, justify='center').pack()
-        tk.Scale(l2_stack, from_=-199, to=199, orient=tk.HORIZONTAL, variable=self.offset_live2_var, length=150, showvalue=False, command=self._on_offset_change).pack()
+        tk.Scale(l2_stack, from_=-9999, to=9999, orient=tk.HORIZONTAL, variable=self.offset_live2_var, length=150, showvalue=False, command=self._on_offset_change).pack()
         tk.Button(self.l2_unit, text="▶", width=3, command=lambda: self.adjust_offset("live2", 1)).pack(side=tk.LEFT, padx=2)
 
         # フォルダ参照・再生コントロール
@@ -479,7 +479,7 @@ class FolloasViewerApp:
         if not self.is_playing: self.update_view()
     def adjust_offset(self, mode, delta):
         v = self.offset_var if mode == "log" else self.offset_live2_var
-        v.set(max(-199, min(199, v.get() + delta))); self.update_view()
+        v.set(max(-9999, min(9999, v.get() + delta))); self.update_view()
     def mark_start(self):
         if self.current_out is not None:
             self.current_out = None
