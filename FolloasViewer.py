@@ -15,7 +15,7 @@ import sys
 # ==========================================
 # バージョン定義
 # ==========================================
-VERSION = "V1.63 2026/05/18"
+VERSION = "V1.64 2026/05/20"
 
 # ==========================================
 # 外部モジュール（log_summarizer.py）の完全統合
@@ -732,26 +732,44 @@ class FolloasViewerApp:
 
                     ox, oy = 2, 7
                     if status == "OK":
+                        # Live1 動画 (img1_for_vid) へのスコア焼き込みのため PIL オブジェクトを用意
+                        pil_l1 = None
+                        draw_l1 = None
+                        if show_live1_box and 0 <= j < self.total_l1:
+                            pil_l1 = Image.fromarray(cv2.cvtColor(img1_for_vid, cv2.COLOR_BGR2RGB))
+                            draw_l1 = ImageDraw.Draw(pil_l1)
+
                         for ln, b in enumerate(boxes):
                             sc, x, y, w, h, s = b
                             x1, y1, x2, y2 = int(x), int(y), int(x + w), int(y + h)
                             color = "red" if sc >= self.score_var.get() else "blue"
-                            color_cv = (0, 0, 255) if sc >= self.score_var.get() else (255, 0, 0)
+                            
+                            # 枠上のスコア表示の動的配置ロジック
+                            text_y = y1 if y1 > self.fontpitchy2 * 2 else y2 + self.fontpitchy2 + 6
+                            text_x = 8 if x1 < 8 else x1
                             
                             draw.rectangle([x1+ox, y1+oy, x2+ox, y2+oy], outline=color, width=4)
-                            # 枠上のスコア表示追加 (V1.06風)
-                            draw.text((x1+ox, y1+oy-28), f"{sc:.2f}", fill='white', font=font_lucon)
+                            # 枠上のスコア表示追加 (V1.06風) - 動的配置対応
+                            draw.text((text_x+ox, text_y+oy - 28), f"{sc:.2f}", fill='white', font=font_lucon)
 
                             t1 = f"{sc:.2f}"; t2 = f"({int(x): >3},{int(y): >3})({int(w): >3},{int(h): >3}){int(s): >6}"; t3 = f"{int(abs_f): >8}"
                             draw.text((8+ox, ln * self.fontpitchy2 + 6 + oy), t1, fill='white', font=font_lucon)
                             draw.text((8+ox + (self.fontpitchx2 * 5), ln * self.fontpitchy2 + 6 + oy), t2, fill='white', font=font_lucon)
                             draw.text((577+ox, ln * self.fontpitchy2 + 6 + oy), t3, fill='white', font=font_lucon)
                             
-                            if show_live1_box and 0 <= j < self.total_l1:
+                            if draw_l1 is not None:
+                                draw_l1.rectangle([x1 + l1, y1, x2 + l1, y2], outline=color, width=4)
+                                text_x_l1 = 8 + l1 if x1 + l1 < 8 + l1 else x1 + l1
+                                # Live1上のスコア表示追加 (V1.06風) - 動的配置対応
+                                draw_l1.text((text_x_l1, text_y - 28), f"{sc:.2f}", fill='white', font=font_lucon)
+                                
+                                # Capture画像内の Live1 枠上スコア追加 (V1.06風) - 動的配置対応
                                 draw.rectangle([x1 + 729 + ox, y1 + oy, x2 + 729 + ox, y2 + oy], outline=color, width=4)
-                                # Live1上のスコア表示追加 (V1.06風)
-                                draw.text((x1 + 729 + ox, y1 + oy - 28), f"{sc:.2f}", fill='white', font=font_lucon)
-                                cv2.rectangle(img1_for_vid, (x1 + l1, y1), (x2 + l1, y2), color_cv, 4)
+                                draw.text((text_x + 729 + ox, text_y + oy - 28), f"{sc:.2f}", fill='white', font=font_lucon)
+
+                        if pil_l1 is not None:
+                            img1_for_vid = cv2.cvtColor(np.array(pil_l1), cv2.COLOR_RGB2BGR)
+
                         if not boxes:
                             draw.text((577+ox, 6 + oy), f"{int(abs_f): >8}", fill='white', font=font_lucon)
                     else:

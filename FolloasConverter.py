@@ -15,7 +15,7 @@ import sys
 import subprocess
 import ctypes
 
-VERSION = "V1.34 2026/05/18"
+VERSION = "V1.35 2026/05/20"
 
 class FolloasConverterApp:
     def __init__(self, root):
