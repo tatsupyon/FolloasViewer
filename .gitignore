@@ -1,3 +1,8 @@
-build/
-*.spec
+# Pythonの一時ファイル・キャッシュ
 __pycache__/
+*.pyc
+
+#pyinstallerの作業ファイル
+build/
+dist/
+*.spec
