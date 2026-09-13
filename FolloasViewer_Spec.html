@@ -1,21 +1,7 @@
-<html>
-<head>
-    <meta charset="utf-8">
-    <title>FolloasViewer_Spec</title>
-    <style>
-        body { font-family: sans-serif; line-height: 1.6; padding: 20px; max-width: 800px; margin: 0 auto; }
-        table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
-        th, td { border: 1px solid #ddd; padding: 8px; }
-        th { background-color: #f2f2f2; }
-        code { background-color: #f4f4f4; padding: 2px 4px; border-radius: 4px; }
-        pre { background-color: #f4f4f4; padding: 10px; border-radius: 4px; overflow-x: auto; }
-    </style>
-</head>
-<body>
 <h1>FolloasViewer (画像VIEWER) システム仕様書</h1>
 <h2>1. システム概要</h2>
 <p>本システムは、FolloasConverterで生成された <code>_ViewReady</code> フォルダを読み込み、GUI上で各種データの同期再生、位相調整、カット編集、および不要シーンを除外した再エンコード（エクスポート）を行うためのツールです。
-最新バージョン: V1.65 (2026/09/13)</p>
+最新バージョン: V1.67 (2026/09/13)</p>
 <h2>2. 動作環境・依存ライブラリ</h2>
 <ul>
 <li><strong>Pythonバージョン:</strong> Python 3.14.4</li>
@@ -41,44 +27,20 @@
 <li><strong>描画ピッチ:</strong> 横 14px / 縦 28px (<code>fontpitchx2</code>/<code>fontpitchy2</code>)。Viewing時もこのピッチで統一。</li>
 <li><strong>文字色:</strong> 認識枠上のスコア、および解析画面上部のメッセージは全て <strong>白 (#FFFFFF)</strong> で描画。</li>
 <li><strong>動的配置:</strong> 認識枠が画面上端に近い場合、スコア表示を枠の下側に自動的に回り込ませる補正ロジックを搭載。</li>
+<li><strong>Live2表示仕様:</strong></li>
+<li><code>-no-compress-l2</code> 起動引数、または「LIVE2圧縮なし」UIにより、Live2の画像アスペクト比を維持します。Live2画像から認識領域である中央の <code>400x720</code> をクロップし、<code>720x720</code> にリサイズして表示します。</li>
+<li><strong>学習画像エクスポート仕様:</strong></li>
+<li>「学習画像エクスポート」機能は、現在表示中のLive2画像（上記仕様でクロップ・リサイズ済み）を <code>_ViewReady/training</code> フォルダに出力します。</li>
+<li>同時に、認識ログから枠座標を取得し、YOLOフォーマット (<code>&lt;class_id=0&gt; &lt;x_center&gt; &lt;y_center&gt; &lt;w&gt; &lt;h&gt;</code>) に正規化変換して、同名の <code>.txt</code> アノテーションファイルとして保存します。</li>
 </ul>
 <h2>4. viewer.ini 仕様</h2>
-<table>
-<thead>
-<tr>
-<th style="text-align: left;">キー名</th>
-<th style="text-align: left;">内容</th>
-<th style="text-align: left;">形式</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td style="text-align: left;">SCORE_THRESHOLD</td>
-<td style="text-align: left;">認識枠の判定基準</td>
-<td style="text-align: left;">float (例: 0.40)</td>
-</tr>
-<tr>
-<td style="text-align: left;">ANALYSIS_PHASE</td>
-<td style="text-align: left;">ログデータのオフセット</td>
-<td style="text-align: left;">int</td>
-</tr>
-<tr>
-<td style="text-align: left;">LIVE2_PHASE</td>
-<td style="text-align: left;">Live2動画のオフセット</td>
-<td style="text-align: left;">int</td>
-</tr>
-<tr>
-<td style="text-align: left;">SHOW_LIVE1_BOX</td>
-<td style="text-align: left;">Live1画像上の枠表示</td>
-<td style="text-align: left;">ON / OFF</td>
-</tr>
-<tr>
-<td style="text-align: left;">CUT_RANGES</td>
-<td style="text-align: left;">カットされた全区間</td>
-<td style="text-align: left;">[start,end,start,end...] のカンマ区切り</td>
-</tr>
-</tbody>
-</table>
+<p>| キー名 | 内容 | 形式 |
+| :--- | :--- | :--- |
+| SCORE_THRESHOLD | 認識枠の判定基準 | float (例: 0.40) |
+| ANALYSIS_PHASE | ログデータのオフセット | int |
+| LIVE2_PHASE | Live2動画のオフセット | int |
+| SHOW_LIVE1_BOX | Live1画像上の枠表示 | ON / OFF |
+| CUT_RANGES | カットされた全区間 | [start,end,start,end...] のカンマ区切り |</p>
 <h2>5. エクスポート仕様 (<code>_Edit</code> フォルダ)</h2>
 <ul>
 <li><strong>動画:</strong> <code>mp4v</code> コーデックを使用。</li>
@@ -90,5 +52,3 @@
 <li><code>output.csv</code>: <code>run_summarize_log</code> 関数による自動集計結果。</li>
 <li><strong>同期整合性:</strong> 基準フレーム <code>j</code> に対して <code>j + off_log</code> および <code>j + off_l2</code> を参照。セット単位でカット判定を行うため、同期ズレは発生しません。</li>
 </ul>
-</body>
-</html>

@@ -1,19 +1,5 @@
-<html>
-<head>
-    <meta charset="utf-8">
-    <title>FolloasViewer_Manual</title>
-    <style>
-        body { font-family: sans-serif; line-height: 1.6; padding: 20px; max-width: 800px; margin: 0 auto; }
-        table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
-        th, td { border: 1px solid #ddd; padding: 8px; }
-        th { background-color: #f2f2f2; }
-        code { background-color: #f4f4f4; padding: 2px 4px; border-radius: 4px; }
-        pre { background-color: #f4f4f4; padding: 10px; border-radius: 4px; overflow-x: auto; }
-    </style>
-</head>
-<body>
 <h1>Folloas キャプチャ画像 VIEWER 操作マニュアル</h1>
-<p>対応バージョン: V1.65〜
+<p>対応バージョン: V1.67〜
 動作環境: Python 3.14.4</p>
 <h2>1. はじめに（設計思想）</h2>
 <p>本ツールは、AI（AICPU）による画像認識結果と、複数のライブ映像（Live1/Live2）を統合して視覚的に確認・分析するための専用ビューアです。</p>
@@ -35,11 +21,17 @@
 </li>
 <li><strong>フォルダの直接起動</strong>:<ul>
 <li><code>python FolloasViewer.py "フォルダパス"</code> のように引数を渡して起動すると、指定したフォルダを即座に開きます。</li>
+<li><code>python FolloasViewer.py -no-compress-l2</code> のように引数を付けると、Live2画像の圧縮を無効化（中央クロップ）して起動します。</li>
 </ul>
 </li>
 </ul>
 <h2>3. 解析表示とSCORE閾値</h2>
 <ul>
+<li><strong>解析位相の調整と固定 (Lock)</strong>:<ul>
+<li><strong>解析位相</strong>の数値を変更することで、映像と認識ログのタイミングのズレ（位相）を調整できます。</li>
+<li><strong>[ログ固定 (Lock)]</strong>: チェックを入れると、画面上の認識枠の表示がその時点のコマで固定されます。映像を再生・コマ送りすると、ズレを補正するために位相の数値が自動的に追従計算されます。特定のシーンでのログ合わせに活用してください。</li>
+</ul>
+</li>
 <li><strong>SCORE閾値の変更</strong>:<ul>
 <li>画面左下の <strong>「SCORE閾値=」</strong> の右側にあるテキストボックスに数値を入力し、<strong>Enterキー</strong> を押すと反映されます。</li>
 <li>キーボードの <strong>[↑] / [↓]</strong> キーでも 0.05 刻みで調整可能です。</li>
@@ -69,7 +61,11 @@
 *   <strong>LIVE2_PHASE</strong>: Live1とLive2の映像間のズレ補正値。
 *   <strong>SHOW_LIVE1_BOX</strong>: Live1画像上への枠表示のON/OFF。
 *   <strong>CUT_RANGES</strong>: 編集で設定したカット箇所。</p>
-<h2>5. カット編集とエクスポート</h2>
+<h2>5. 学習用データのエクスポート</h2>
+<p>Live2の映像を物体検出AIの学習データとして抽出することができます。
+*   <strong>[学習画像エクスポート]</strong>: ボタンを押すと、現在表示中のLive2画像から認識対象領域（中央400x720）を切り出し、720x720に引き伸ばした画像（JPEG）を <code>training</code> フォルダに保存します。
+*   <strong>アノテーションファイル</strong>: 画像と同時に、YOLOフォーマット（相対座標）に変換されたラベルデータ（<code>.txt</code>）も自動生成されます。</p>
+<h2>6. カット編集と動画エクスポート</h2>
 <p>分析に不要なシーンを除外したり、逆にカットを取り消したりできます。
 1.  <strong>モード選択</strong>:
     *   <strong>☑ CUT (ON)</strong>: 新しくカット区間を設定する場合に使用します。
@@ -81,5 +77,3 @@
     *   カットされた区間を除外した統合動画（mp4）と、集計ログデータ（<code>head.log</code>, <code>head2.csv</code>, <code>output.csv</code>）を <code>_Edit</code> フォルダに生成します。
     *   <strong>動画への焼き込み</strong>: EXPORTされた動画には、Viewing時と同じ形式でスコア情報が焼き込まれます。
     *   <code>head2.csv</code> は集計ツールに適した、重複のないクリーンな形式で出力されます。</p>
-</body>
-</html>
