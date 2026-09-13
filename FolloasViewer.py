@@ -15,7 +15,7 @@ import sys
 # ==========================================
 # バージョン定義
 # ==========================================
-VERSION = "V1.65 2026/09/13"
+VERSION = "V1.66 2026/09/13"
 
 # ==========================================
 # 外部モジュール（log_summarizer.py）の完全統合
@@ -103,6 +103,9 @@ class FolloasViewerApp:
         self.fps_val = 0.0
 
         self.batch_mode = False
+        self.no_compress_l2_var = tk.BooleanVar(value=False)
+        self.base_win_w = 1866
+        self.base_win_h = 1000
         self._setup_ui()
         self.root.bind("<Key>", self._on_key)
         
@@ -116,22 +119,29 @@ class FolloasViewerApp:
                 print(f"バージョン: {VERSION}")
                 print("使い方: python FolloasViewer.py [ターゲットディレクトリ(xxx_ViewReady)]")
                 print("オプション:")
-                print("  -h, --help このヘルプメッセージを表示して終了します")
+                print("  -no-compress-l2  Live2の映像を横圧縮せずに元のアスペクト比のまま表示します")
+                print("  -h, --help       このヘルプメッセージを表示して終了します")
                 print("※引数なしで起動するとGUIモードで立ち上がります。")
                 print("※ターゲットディレクトリを指定するとバッチモード（自動読み込み＆エクスポート）になります。")
                 sys.exit(0)
 
-            # 引数を取得し、前後の空白除去とパスの正規化を行う
-            input_path = os.path.normpath(os.path.abspath(args[0].strip()))
-            
-            if os.path.isdir(input_path):
-                self.batch_mode = True
-                self.root.after(500, lambda: self.browse_folder(input_path))
-                # 読み込み完了（の少し後）にエクスポートを開始
-                self.root.after(2000, self.start_batch_export)
-            else:
-                print(f"Error: Directory not found - {input_path}")
-                self.root.after(100, self.root.destroy)
+            if "-no-compress-l2" in args:
+                self.no_compress_l2_var.set(True)
+                args.remove("-no-compress-l2")
+                self._apply_l2_compress_state()
+
+            if args:
+                # 引数を取得し、前後の空白除去とパスの正規化を行う
+                input_path = os.path.normpath(os.path.abspath(args[0].strip()))
+                
+                if os.path.isdir(input_path):
+                    self.batch_mode = True
+                    self.root.after(500, lambda: self.browse_folder(input_path))
+                    # 読み込み完了（の少し後）にエクスポートを開始
+                    self.root.after(2000, self.start_batch_export)
+                else:
+                    print(f"Error: Directory not found - {input_path}")
+                    self.root.after(100, self.root.destroy)
 
         # IME無効化 (Windowsのみ)
         if sys.platform == "win32":
@@ -160,6 +170,9 @@ class FolloasViewerApp:
         self.timeline_canvas.place(x=10, y=5)
         self.timeline_canvas.bind("<Button-1>", self._on_timeline_click)
         self.timeline_canvas.bind("<B1-Motion>", self._on_timeline_click)
+
+        # 動的リサイズの初期反映
+        self._apply_l2_compress_state()
 
         # SCORE閾値入力用 (Y=830)
         self.score_unit = tk.Frame(self.main_canvas, bg='#f0f0f0')
@@ -202,17 +215,54 @@ class FolloasViewerApp:
         self.cut_lbl = tk.Label(self.frame_unit, text="", bg='#f0f0f0', fg='red', font=("MS Gothic", 10, "bold"))
         self.cut_lbl.pack(side=tk.LEFT)
 
-        # LIVE2位相 (Y=745)
+        # LIVE2位相 (Y=745) - 2段構成(A案)
         self.l2_unit = tk.Frame(self.main_canvas, bg='#f0f0f0')
         self.main_canvas.create_window(1656, 745, window=self.l2_unit, anchor=tk.N)
-        tk.Label(self.l2_unit, text="LIVE2位相：", bg='#f0f0f0', font=("MS Gothic", 10, "bold")).pack(side=tk.LEFT, padx=5)
-        tk.Button(self.l2_unit, text="◀", width=3, command=lambda: self.adjust_offset("live2", -1)).pack(side=tk.LEFT, padx=2)
+        
+        l2_top = tk.Frame(self.l2_unit, bg='#f0f0f0')
+        l2_top.pack(side=tk.TOP)
+        l2_bottom = tk.Frame(self.l2_unit, bg='#f0f0f0')
+        l2_bottom.pack(side=tk.TOP, pady=2)
+
+        tk.Label(l2_top, text="LIVE2位相：", bg='#f0f0f0', font=("MS Gothic", 10, "bold")).pack(side=tk.LEFT, padx=5)
+        tk.Button(l2_top, text="◀", width=3, command=lambda: self.adjust_offset("live2", -1)).pack(side=tk.LEFT, padx=2)
+        
         self.offset_live2_var = tk.IntVar(value=0)
-        l2_stack = tk.Frame(self.l2_unit, bg='#f0f0f0'); l2_stack.pack(side=tk.LEFT, padx=2)
+        l2_stack = tk.Frame(l2_top, bg='#f0f0f0')
+        l2_stack.pack(side=tk.LEFT, padx=2)
         tk.Entry(l2_stack, textvariable=self.offset_live2_var, width=5, justify='center').pack()
         tk.Scale(l2_stack, from_=-9999, to=9999, orient=tk.HORIZONTAL, variable=self.offset_live2_var, length=150, showvalue=False, command=self._on_offset_change).pack()
-        tk.Button(self.l2_unit, text="▶", width=3, command=lambda: self.adjust_offset("live2", 1)).pack(side=tk.LEFT, padx=2)
+        tk.Button(l2_top, text="▶", width=3, command=lambda: self.adjust_offset("live2", 1)).pack(side=tk.LEFT, padx=2)
+        
+        # LIVE2圧縮なし チェックボックス (下段)
+        self.cb_compress_l2 = tk.Checkbutton(
+            l2_bottom, text="LIVE2圧縮なし", variable=self.no_compress_l2_var, bg='#f0f0f0',
+            command=self._on_toggle_l2_compress, font=("MS Gothic", 9)
+        )
+        self.cb_compress_l2.pack()
 
+    def _on_toggle_l2_compress(self):
+        self._apply_l2_compress_state()
+        self.update_view()
+
+    def _apply_l2_compress_state(self):
+        if self.no_compress_l2_var.get():
+            # 圧縮なし時の想定Live2幅 (720x720を前提)
+            diff = 720 - 400
+        else:
+            diff = 0
+            
+        new_win_w = self.base_win_w + diff
+        new_tl_w = 1846 + diff
+        
+        self.root.geometry(f"{new_win_w}x{self.base_win_h}")
+        self.main_canvas.config(width=new_win_w)
+        self.timeline_width = new_tl_w
+        self.timeline_canvas.config(width=new_tl_w)
+        
+        # タイムラインの再描画
+        if hasattr(self, 'total_frames') and self.total_frames > 0:
+            self.redraw_timeline()
         # フォルダ参照・再生コントロール
         tk.Button(self.ctrl_panel, text="フォルダ参照", width=12, command=self.browse_folder).place(x=10, y=60)
         tk.Button(self.ctrl_panel, text="設定記録", width=10, command=self.save_config).place(x=110, y=60)
@@ -271,7 +321,9 @@ class FolloasViewerApp:
         self.main_canvas.delete("img_layer")
         self.main_canvas.create_rectangle(2, 7, 722, 727, fill='black', outline='gray', tags="img_layer")
         self.main_canvas.create_rectangle(729, 7, 1449, 727, fill='black', outline='', tags="img_layer")
-        self.main_canvas.create_rectangle(1456, 7, 1856, 727, fill='black', outline='', tags="img_layer")
+        
+        l2_w = 720 if self.no_compress_l2_var.get() else 400
+        self.main_canvas.create_rectangle(1456, 7, 1456 + l2_w, 727, fill='black', outline='', tags="img_layer")
 
         # フォルダパスを表示 (横位置: Frame情報の1054、縦位置: バージョンの850)
         if self.target_dir:
@@ -291,8 +343,16 @@ class FolloasViewerApp:
         if 0 <= idx2 < self.total_frames:
             img2 = self._read_img(os.path.join(self.target_dir, "live2", f"live2_{idx2:06d}.jpg"))
         else: img2 = np.zeros((720, 400, 3), dtype=np.uint8)
+        
         l2 = (img2.shape[1]-400)//2 if img2.shape[1]>400 else 0
-        img2_f = cv2.resize(img2[0:720, l2:l2+400] if img2.shape[1]>400 else img2, (400, 720))
+        img2_cropped = img2[0:720, l2:l2+400] if img2.shape[1]>400 else img2
+
+        if self.no_compress_l2_var.get():
+            # 圧縮なし：認識対象(中央400x720)を横に引き伸ばして 720x720 で表示
+            img2_f = cv2.resize(img2_cropped, (720, 720))
+        else:
+            # 圧縮あり：認識対象(中央400x720)をそのまま 400x720 で表示
+            img2_f = cv2.resize(img2_cropped, (400, 720))
 
         self.tk1 = ImageTk.PhotoImage(Image.fromarray(cv2.cvtColor(img1_f, cv2.COLOR_BGR2RGB)))
         self.tk2 = ImageTk.PhotoImage(Image.fromarray(cv2.cvtColor(img2_f, cv2.COLOR_BGR2RGB)))
