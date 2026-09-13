@@ -15,7 +15,7 @@ import sys
 # ==========================================
 # バージョン定義
 # ==========================================
-VERSION = "V1.66 2026/09/13"
+VERSION = "V1.67 2026/09/13"
 
 # ==========================================
 # 外部モジュール（log_summarizer.py）の完全統合
@@ -185,13 +185,30 @@ class FolloasViewerApp:
         # 解析位相 (Y=745)
         self.ana_unit = tk.Frame(self.main_canvas, bg='#f0f0f0')
         self.main_canvas.create_window(182, 745, window=self.ana_unit, anchor=tk.N)
-        tk.Label(self.ana_unit, text="解析位相：", bg='#f0f0f0', font=("MS Gothic", 10, "bold")).pack(side=tk.LEFT, padx=5)
-        tk.Button(self.ana_unit, text="◀", width=3, command=lambda: self.adjust_offset("log", -1)).pack(side=tk.LEFT, padx=2)
+        
+        ana_top = tk.Frame(self.ana_unit, bg='#f0f0f0')
+        ana_top.pack(side=tk.TOP)
+        ana_bottom = tk.Frame(self.ana_unit, bg='#f0f0f0')
+        ana_bottom.pack(side=tk.TOP, pady=2)
+
+        tk.Label(ana_top, text="解析位相：", bg='#f0f0f0', font=("MS Gothic", 10, "bold")).pack(side=tk.LEFT, padx=5)
+        tk.Button(ana_top, text="◀", width=3, command=lambda: self.adjust_offset("log", -1)).pack(side=tk.LEFT, padx=2)
+        
         self.offset_var = tk.IntVar(value=0)
-        ana_stack = tk.Frame(self.ana_unit, bg='#f0f0f0'); ana_stack.pack(side=tk.LEFT, padx=2)
+        ana_stack = tk.Frame(ana_top, bg='#f0f0f0')
+        ana_stack.pack(side=tk.LEFT, padx=2)
         tk.Entry(ana_stack, textvariable=self.offset_var, width=5, justify='center').pack()
         tk.Scale(ana_stack, from_=-9999, to=9999, orient=tk.HORIZONTAL, variable=self.offset_var, length=150, showvalue=False, command=self._on_offset_change).pack()
-        tk.Button(self.ana_unit, text="▶", width=3, command=lambda: self.adjust_offset("log", 1)).pack(side=tk.LEFT, padx=2)
+        tk.Button(ana_top, text="▶", width=3, command=lambda: self.adjust_offset("log", 1)).pack(side=tk.LEFT, padx=2)
+        
+        # 下段にロックボタンを追加
+        self.lock_log_var = tk.BooleanVar(value=False)
+        self.locked_log_idx = 0
+        self.cb_lock_log = tk.Checkbutton(
+            ana_bottom, text="ログ固定 (Lock)", variable=self.lock_log_var, bg='#f0f0f0',
+            command=self._on_toggle_log_lock, font=("MS Gothic", 9)
+        )
+        self.cb_lock_log.pack()
 
         # Live1枠表示用チェックボックス追加 (Y=745, X=729)
         self.show_live1_box_var = tk.BooleanVar(value=True)
@@ -266,6 +283,7 @@ class FolloasViewerApp:
         # フォルダ参照・再生コントロール
         tk.Button(self.ctrl_panel, text="フォルダ参照", width=12, command=self.browse_folder).place(x=10, y=60)
         tk.Button(self.ctrl_panel, text="設定記録", width=10, command=self.save_config).place(x=110, y=60)
+        tk.Button(self.ctrl_panel, text="学習画像エクスポート", width=20, command=self.export_training_data).place(x=220, y=60)
         play_grp = tk.Frame(self.ctrl_panel, bg='#f0f0f0'); play_grp.place(x=1040, y=60, anchor=tk.N)
         tk.Button(play_grp, text="◀ コマ戻し", width=10, command=self.step_backward).pack(side=tk.LEFT, padx=2)
         self.btn_play = tk.Button(play_grp, text="再生", width=10, command=self.toggle_play); self.btn_play.pack(side=tk.LEFT, padx=2)
@@ -316,8 +334,19 @@ class FolloasViewerApp:
         img = cv2.imdecode(np.fromfile(p, dtype=np.uint8), cv2.IMREAD_COLOR)
         return img if img is not None else np.zeros((720, 720, 3), dtype=np.uint8)
 
+    def _on_toggle_log_lock(self):
+        if self.lock_log_var.get():
+            self.locked_log_idx = self.current_frame + self.offset_var.get()
+        self.update_view()
+
     def update_view(self):
         if self.total_frames == 0: return
+        
+        if getattr(self, 'lock_log_var', None) and self.lock_log_var.get():
+            new_offset = self.locked_log_idx - self.current_frame
+            new_offset = max(-9999, min(9999, new_offset))
+            self.offset_var.set(new_offset)
+            
         self.main_canvas.delete("img_layer")
         self.main_canvas.create_rectangle(2, 7, 722, 727, fill='black', outline='gray', tags="img_layer")
         self.main_canvas.create_rectangle(729, 7, 1449, 727, fill='black', outline='', tags="img_layer")
@@ -437,6 +466,61 @@ class FolloasViewerApp:
         elif listno == 0: # ボックスがないか、最初の行としてタイムスタンプのみ表示
             canvas.create_text(577+ox, listno * self.fontpitchy2 + 6 + oy, text=t3, fill='white', font=('Lucida Console', self.fontsize2), anchor="nw", tags="img_layer")
 
+    def export_training_data(self):
+        if getattr(self, 'target_dir', None) is None or self.total_frames == 0:
+            return
+            
+        train_dir = os.path.join(self.target_dir, "training")
+        os.makedirs(train_dir, exist_ok=True)
+        
+        # --- 画像の書き出し ---
+        off_l2 = self.offset_live2_var.get()
+        idx2 = self.current_frame + off_l2
+        
+        img2_path = os.path.join(self.target_dir, "live2", f"live2_{idx2:06d}.jpg")
+        if not os.path.exists(img2_path):
+            return
+            
+        img2 = self._read_img(img2_path)
+        l2 = (img2.shape[1]-400)//2 if img2.shape[1]>400 else 0
+        img2_cropped = img2[0:720, l2:l2+400] if img2.shape[1]>400 else img2
+        img2_f = cv2.resize(img2_cropped, (720, 720))
+        
+        out_img_name = f"train_live2_{idx2:06d}.jpg"
+        out_img_path = os.path.join(train_dir, out_img_name)
+        
+        success, encoded_img = cv2.imencode('.jpg', img2_f)
+        if success:
+            with open(out_img_path, 'wb') as f:
+                encoded_img.tofile(f)
+                
+        # --- ログの書き出し (YOLOフォーマット) ---
+        off_log = self.offset_var.get()
+        idx_log = self.current_frame + off_log
+        
+        out_txt_name = f"train_live2_{idx2:06d}.txt"
+        out_txt_path = os.path.join(train_dir, out_txt_name)
+        
+        with open(out_txt_path, 'w', encoding='utf-8') as f:
+            if getattr(self, 'total_log', 0) > 0 and 0 <= idx_log < self.total_log:
+                entry = self.log_data.get(idx_log)
+                if entry and "boxes" in entry:
+                    for b in entry["boxes"]:
+                        if len(b) >= 5:
+                            x, y, w, h = b[1], b[2], b[3], b[4]
+                            
+                            x_center = x + w / 2.0
+                            y_center = y + h / 2.0
+                            
+                            x_norm = x_center / 720.0
+                            y_norm = y_center / 720.0
+                            w_norm = w / 720.0
+                            h_norm = h / 720.0
+                            
+                            f.write(f"0 {x_norm:.6f} {y_norm:.6f} {w_norm:.6f} {h_norm:.6f}\n")
+                            
+        print(f"Exported training data: {out_img_name} and {out_txt_name}")
+
     def redraw_timeline(self):
         self.timeline_canvas.delete("all")
         if self.total_frames == 0: return
@@ -549,10 +633,17 @@ class FolloasViewerApp:
     def _on_timeline_click(self, event):
         if self.total_frames > 0: self.current_frame = int((max(0, min(event.x, self.timeline_width)) / self.timeline_width) * self.total_frames); self.update_view()
     def _on_offset_change(self, v): 
+        if getattr(self, 'lock_log_var', None) and self.lock_log_var.get():
+            self.locked_log_idx = self.current_frame + self.offset_var.get()
         if not self.is_playing: self.update_view()
+        
     def adjust_offset(self, mode, delta):
         v = self.offset_var if mode == "log" else self.offset_live2_var
-        v.set(max(-9999, min(9999, v.get() + delta))); self.update_view()
+        new_val = max(-9999, min(9999, v.get() + delta))
+        v.set(new_val)
+        if mode == "log" and getattr(self, 'lock_log_var', None) and self.lock_log_var.get():
+            self.locked_log_idx = self.current_frame + self.offset_var.get()
+        self.update_view()
     def mark_start(self):
         if self.current_out is not None:
             self.current_out = None
