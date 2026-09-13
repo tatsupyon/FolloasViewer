@@ -1,0 +1,94 @@
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>FolloasViewer_Spec</title>
+    <style>
+        body { font-family: sans-serif; line-height: 1.6; padding: 20px; max-width: 800px; margin: 0 auto; }
+        table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; }
+        th { background-color: #f2f2f2; }
+        code { background-color: #f4f4f4; padding: 2px 4px; border-radius: 4px; }
+        pre { background-color: #f4f4f4; padding: 10px; border-radius: 4px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+<h1>FolloasViewer (画像VIEWER) システム仕様書</h1>
+<h2>1. システム概要</h2>
+<p>本システムは、FolloasConverterで生成された <code>_ViewReady</code> フォルダを読み込み、GUI上で各種データの同期再生、位相調整、カット編集、および不要シーンを除外した再エンコード（エクスポート）を行うためのツールです。
+最新バージョン: V1.65 (2026/09/13)</p>
+<h2>2. 動作環境・依存ライブラリ</h2>
+<ul>
+<li><strong>Pythonバージョン:</strong> Python 3.14.4</li>
+<li><strong>標準ライブラリ:</strong> <code>os</code>, <code>csv</code>, <code>glob</code>, <code>time</code>, <code>threading</code>, <code>tkinter</code>, <code>shutil</code>, <code>tempfile</code>, <code>sys</code></li>
+<li><strong>外部ライブラリ:</strong></li>
+<li><code>opencv-python</code> (cv2): 画像の読み込み、動画のエクスポート</li>
+<li><code>numpy</code>: 画像データの配列処理、合成</li>
+<li><code>Pillow</code> (PIL): キャンバスへの描画、Tkinterへの画像渡し</li>
+</ul>
+<h2>3. 主要な内部仕様</h2>
+<ul>
+<li><strong>データ構造 (Cut Flags):</strong></li>
+<li>最大フレーム数分のブール値配列（<code>cut_flags</code>）でカット状態を管理。</li>
+<li>START-END方式による範囲書き換え（ビットマップ方式）により、重複区間の競合を排除。</li>
+<li><strong>SCORE閾値管理:</strong></li>
+<li><code>tk.DoubleVar</code> によるGUIとの双方向バインディング。</li>
+<li>キャンバス描画から標準Widget（Entry）へ移行し、入力容易性を向上。</li>
+<li><strong>日本語環境への最適化:</strong></li>
+<li>出力される集計データ (<code>output.csv</code>) のエンコーディングを <code>cp932</code> (Shift-JIS) に統一し、Excel等での閲覧性を確保。</li>
+<li><code>viewer.ini</code> のキー名を英字（ASCII）に統一し、実行環境やエンコーディングの違いによる読み込みエラーを完全に排除。</li>
+<li><strong>描画仕様 (V1.06 オリジナル再現):</strong></li>
+<li><strong>使用フォント:</strong> <code>Lucida Console</code> (20pt) を標準採用。</li>
+<li><strong>描画ピッチ:</strong> 横 14px / 縦 28px (<code>fontpitchx2</code>/<code>fontpitchy2</code>)。Viewing時もこのピッチで統一。</li>
+<li><strong>文字色:</strong> 認識枠上のスコア、および解析画面上部のメッセージは全て <strong>白 (#FFFFFF)</strong> で描画。</li>
+<li><strong>動的配置:</strong> 認識枠が画面上端に近い場合、スコア表示を枠の下側に自動的に回り込ませる補正ロジックを搭載。</li>
+</ul>
+<h2>4. viewer.ini 仕様</h2>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">キー名</th>
+<th style="text-align: left;">内容</th>
+<th style="text-align: left;">形式</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;">SCORE_THRESHOLD</td>
+<td style="text-align: left;">認識枠の判定基準</td>
+<td style="text-align: left;">float (例: 0.40)</td>
+</tr>
+<tr>
+<td style="text-align: left;">ANALYSIS_PHASE</td>
+<td style="text-align: left;">ログデータのオフセット</td>
+<td style="text-align: left;">int</td>
+</tr>
+<tr>
+<td style="text-align: left;">LIVE2_PHASE</td>
+<td style="text-align: left;">Live2動画のオフセット</td>
+<td style="text-align: left;">int</td>
+</tr>
+<tr>
+<td style="text-align: left;">SHOW_LIVE1_BOX</td>
+<td style="text-align: left;">Live1画像上の枠表示</td>
+<td style="text-align: left;">ON / OFF</td>
+</tr>
+<tr>
+<td style="text-align: left;">CUT_RANGES</td>
+<td style="text-align: left;">カットされた全区間</td>
+<td style="text-align: left;">[start,end,start,end...] のカンマ区切り</td>
+</tr>
+</tbody>
+</table>
+<h2>5. エクスポート仕様 (<code>_Edit</code> フォルダ)</h2>
+<ul>
+<li><strong>動画:</strong> <code>mp4v</code> コーデックを使用。</li>
+<li><strong>スコア焼き込み:</strong> 解析画面およびLIVE1画面の認識枠上に、Viewing時と同様のスコア（白文字）を焼き込みます。</li>
+<li><strong>フレーム制御:</strong> カットされたフレームはインデックスレベルで完全にスキップされ、タイムスタンプが再計算されます。</li>
+<li><strong>ログ:</strong> </li>
+<li><code>head.log</code>: 1フレーム1行の基本情報に加え、物体検出時に <code>@@@</code> 行を挿入。</li>
+<li><code>head2.csv</code>: 重複のないクリーンなフレームヘッダー形式。</li>
+<li><code>output.csv</code>: <code>run_summarize_log</code> 関数による自動集計結果。</li>
+<li><strong>同期整合性:</strong> 基準フレーム <code>j</code> に対して <code>j + off_log</code> および <code>j + off_l2</code> を参照。セット単位でカット判定を行うため、同期ズレは発生しません。</li>
+</ul>
+</body>
+</html>

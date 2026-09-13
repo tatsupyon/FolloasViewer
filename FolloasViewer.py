@@ -15,7 +15,7 @@ import sys
 # ==========================================
 # バージョン定義
 # ==========================================
-VERSION = "V1.64 2026/05/20"
+VERSION = "V1.65 2026/09/13"
 
 # ==========================================
 # 外部モジュール（log_summarizer.py）の完全統合
@@ -108,8 +108,21 @@ class FolloasViewerApp:
         
         # 引数チェック
         if len(sys.argv) > 1:
+            args = sys.argv[1:]
+            
+            # ヘルプ表示のハンドリング
+            if "-h" in args or "--help" in args or "-help" in args or "-?" in args:
+                print("FolloasViewer (データ同期ビューア)")
+                print(f"バージョン: {VERSION}")
+                print("使い方: python FolloasViewer.py [ターゲットディレクトリ(xxx_ViewReady)]")
+                print("オプション:")
+                print("  -h, --help このヘルプメッセージを表示して終了します")
+                print("※引数なしで起動するとGUIモードで立ち上がります。")
+                print("※ターゲットディレクトリを指定するとバッチモード（自動読み込み＆エクスポート）になります。")
+                sys.exit(0)
+
             # 引数を取得し、前後の空白除去とパスの正規化を行う
-            input_path = os.path.normpath(os.path.abspath(sys.argv[1].strip()))
+            input_path = os.path.normpath(os.path.abspath(args[0].strip()))
             
             if os.path.isdir(input_path):
                 self.batch_mode = True

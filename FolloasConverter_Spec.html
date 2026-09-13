@@ -1,0 +1,57 @@
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>FolloasConverter_Spec</title>
+    <style>
+        body { font-family: sans-serif; line-height: 1.6; padding: 20px; max-width: 800px; margin: 0 auto; }
+        table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; }
+        th { background-color: #f2f2f2; }
+        code { background-color: #f4f4f4; padding: 2px 4px; border-radius: 4px; }
+        pre { background-color: #f4f4f4; padding: 10px; border-radius: 4px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+<h1>FolloasConverter (データコンバータ) システム仕様書</h1>
+<h2>1. システム概要</h2>
+<p>本システムは、AI認識ログと複数系統のライブ映像を統合し、Viewerでの高速な可視化を可能にするためのデータ最適化ツールです。
+最新バージョン: V1.36 (2026/09/13)</p>
+<h2>2. 動作環境・依存ライブラリ</h2>
+<ul>
+<li><strong>Pythonバージョン:</strong> Python 3.14.4</li>
+<li><strong>標準ライブラリ:</strong> <code>os</code>, <code>csv</code>, <code>re</code>, <code>tkinter</code>, <code>threading</code>, <code>tempfile</code>, <code>shutil</code>, <code>contextlib</code></li>
+<li><strong>外部ライブラリ:</strong></li>
+<li><code>opencv-python</code> (cv2): 映像のデコード、フレーム抽出（静止画化）</li>
+<li><code>numpy</code>: 画像配列のメモリ管理</li>
+</ul>
+<h2>3. 主要な内部ロジック</h2>
+<ul>
+<li><strong>ログ同期の堅牢化 (Dropout Resilience):</strong></li>
+<li>ログファイルから抽出される時刻（timestamp）が連続していない場合、基準となる 30fps のインターバル（33.33ms）に基づいて「空の認識結果」を自動挿入します。</li>
+<li>これにより、ネットワークの遅延やAICPUの処理落ちでログが欠損しても、Viewer側のタイムラインとの同期が壊れないように設計されています。</li>
+<li><strong>CSVパーサーの適応性:</strong></li>
+<li>AI出力ログの第1行目がヘッダー（文字列）か実データ（数値）かを正規表現で自動判定。</li>
+<li>ヘッダーの有無に関わらず、Frame 0 からの全データを正確に抽出します。</li>
+<li><strong>フレーム抽出の最適化:</strong></li>
+<li><code>live1</code> (基準30fps) は1フレームずつ全て抽出。</li>
+<li><code>live2</code> (25fps) は OpenCV のシーク機能を利用し、基準タイムラインに最も近いフレームを近似的に同期して抽出。</li>
+<li><strong>日本語パス・非ASCII文字への対応:</strong></li>
+<li><code>_video_capture_context</code> を通じて、一時的なシンボリックファイルまたはコピーを作成し、OpenCV が日本語パスを直接扱えない制限を回避しています。</li>
+<li><strong>特殊TSファイル(0x00A0)への堅牢な対応:</strong></li>
+<li>標準のFFmpegデマクサで解析不能なMJPEG-TSファイルに対し、188バイトのTSパケットヘッダーをバイナリレベルで機械的に除去する <code>_strip_ts_payload</code> ロジックを搭載。純粋なMJPEGストリームを再構成して抽出を可能にします。</li>
+<li><strong>サイレント・バッチ処理最適化:</strong></li>
+<li><code>subprocess.CREATE_NO_WINDOW</code> フラグの使用により、FFmpeg実行時のコンソールポップアップを完全に抑制。</li>
+<li>引数指定起動（バッチモード）時は、エラー時を含めポップアップを一切出さず、ターミナルへのログ出力と自動終了を行う完全自動運転仕様。</li>
+<li><strong>プログレスバーの同期精度:</strong></li>
+<li>バイナリ修復時にJPEG開始マーカー（<code>FF D8</code>）を直接カウントすることで、正確な総フレーム数を把握し、GUIの進捗表示と100%同期させます。</li>
+</ul>
+<h2>4. 出力データ仕様 (<code>_ViewReady</code> フォルダ)</h2>
+<ul>
+<li><code>live1/*.jpg</code>: 30fpsの基準連番画像</li>
+<li><code>live2/*.jpg</code>: Live1に同期された連番画像</li>
+<li><code>sync_log.csv</code>: 各フレームに対応する認識結果を1行に集約</li>
+<li>形式: <code>FrameIndex, TimeStamp, score1, x1, y1, w1, h1, s1, ...</code></li>
+<li><code>meta_info_panel.png</code>: 画面キャプチャから抽出した装置・設定情報（Viewer表示用）</li>
+</ul>
+</body>
+</html>

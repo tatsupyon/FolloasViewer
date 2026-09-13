@@ -15,7 +15,7 @@ import sys
 import subprocess
 import ctypes
 
-VERSION = "V1.35 2026/05/20"
+VERSION = "V1.36 2026/09/13"
 
 class FolloasConverterApp:
     def __init__(self, root):
@@ -28,6 +28,7 @@ class FolloasConverterApp:
         self.is_running = False
         self.cancel_requested = False
         self.batch_mode = False
+        self.rotate_var = tk.BooleanVar(value=False)
 
         # 変数の事前宣言（Pyre2等のType Checkerによるmissing-attribute警告対策）
         self.status_var: tk.StringVar
@@ -40,22 +41,39 @@ class FolloasConverterApp:
 
         # 引数チェック
         if len(sys.argv) > 1:
-            self.batch_mode = True
-            # 引数を取得し、前後の空白除去とパスの正規化を行う
-            input_path = os.path.normpath(os.path.abspath(sys.argv[1].strip()))
+            args = sys.argv[1:]
             
-            # デバッグ用: 受け取ったパスを表示
-            print(f"DEBUG: Received path = {input_path}")
+            # ヘルプ表示のハンドリング
+            if "-h" in args or "--help" in args or "-help" in args or "-?" in args:
+                print("FolloasConverter (データコンバータ) V1.36")
+                print("使い方: python FolloasConverter.py [ターゲットディレクトリ] [オプション]")
+                print("オプション:")
+                print("  -rotate    抽出画像と認識ログ(sync_log.csv)を180度回転して出力します")
+                print("  -h, --help このヘルプメッセージを表示して終了します")
+                print("※引数なしで起動するとGUIモードで立ち上がります。")
+                sys.exit(0)
+
+            if "-rotate" in args:
+                self.rotate_var.set(True)
+                args.remove("-rotate")
             
-            if os.path.isdir(input_path):
-                print(f"DEBUG: Directory confirmed.")
-                self.target_dir.set(input_path)
-                # GUIが完全に構築されるのを少し待ってから開始
-                self.root.after(500, self.start_conversion)
-            else:
-                self._show_message("error", "起動エラー", f"Error: Directory not found or invalid path - {input_path}")
-                self.root.after(100, self.root.destroy)
-                return
+            if args:
+                self.batch_mode = True
+                # 引数を取得し、前後の空白除去とパスの正規化を行う
+                input_path = os.path.normpath(os.path.abspath(args[0].strip()))
+                
+                # デバッグ用: 受け取ったパスを表示
+                print(f"DEBUG: Received path = {input_path}")
+                
+                if os.path.isdir(input_path):
+                    print(f"DEBUG: Directory confirmed.")
+                    self.target_dir.set(input_path)
+                    # GUIが完全に構築されるのを少し待ってから開始
+                    self.root.after(500, self.start_conversion)
+                else:
+                    self._show_message("error", "起動エラー", f"Error: Directory not found or invalid path - {input_path}")
+                    self.root.after(100, self.root.destroy)
+                    return
 
         # IME無効化 (Windowsのみ)
         if sys.platform == "win32":
@@ -94,6 +112,10 @@ class FolloasConverterApp:
         # 制御ボタンセクション
         frame_bottom = tk.Frame(self.root, pady=10)
         frame_bottom.pack()
+        
+        self.rotate_chk = tk.Checkbutton(frame_bottom, text="180度回転", variable=self.rotate_var)
+        self.rotate_chk.pack(side=tk.LEFT, padx=10)
+
         self.btn_start = tk.Button(frame_bottom, text="変換開始", command=self.start_conversion, width=15, bg="lightblue")
         self.btn_start.pack(side=tk.LEFT, padx=10)
         self.btn_cancel = tk.Button(frame_bottom, text="キャンセル", command=self.cancel_conversion, width=15, state=tk.DISABLED)
@@ -276,15 +298,17 @@ class FolloasConverterApp:
                 self._show_message("error", "ファイル不足", msg)
                 return
 
+            is_rotated = self.rotate_var.get()
+
             # 1. Live1 (30fps) の展開を基準とする
             self._update_status("1/4: Live1 (30fps基準) の静止画抽出中...")
-            total_frames_30fps = self._extract_frames(live1_path, live1_dir, "live1", 30, 30)
+            total_frames_30fps = self._extract_frames(live1_path, live1_dir, "live1", 30, 30, is_rotated)
             if self.cancel_requested:
                 return self._handle_cancel()
 
             # 2. Live2 (25fps -> 30fps) の展開
             self._update_status("2/4: Live2 (25fps -> 30fps) の同期変換中...")
-            self._extract_frames(live2_path, live2_dir, "live2", 25, 30, total_frames_30fps)
+            self._extract_frames(live2_path, live2_dir, "live2", 25, 30, is_rotated, total_frames_30fps)
             if self.cancel_requested:
                 return self._handle_cancel()
 
@@ -296,7 +320,7 @@ class FolloasConverterApp:
 
             # 4. ログの同期
             self._update_status("4/4: ログのデータクレンジングとタイムライン同期中...")
-            self._sync_log(log_path, output_dir, total_frames_30fps)
+            self._sync_log(log_path, output_dir, total_frames_30fps, is_rotated)
             if self.cancel_requested:
                 return self._handle_cancel()
 
@@ -312,7 +336,7 @@ class FolloasConverterApp:
         finally:
             self.root.after(0, self._reset_ui)
 
-    def _extract_frames(self, video_path, output_dir, prefix, src_fps, target_fps, target_total_frames=None):
+    def _extract_frames(self, video_path, output_dir, prefix, src_fps, target_fps, is_rotated, target_total_frames=None):
         if not os.path.exists(video_path):
             msg = f"動画ファイルが見つかりません:\n{os.path.basename(video_path)}\n\n(フルパス: {video_path})"
             print(f"WARNING: {msg}")
@@ -334,6 +358,10 @@ class FolloasConverterApp:
         rel_output_dir = os.path.relpath(output_dir, v_dir)
         out_pattern = os.path.join(rel_output_dir, f"{prefix}_%06d.jpg")
 
+        vf_opt = f"fps={actual_target_fps}"
+        if is_rotated:
+            vf_opt += ",vflip,hflip"
+
         # 1回目の標準的なコマンド (TSデマクサ使用)
         # -fflags +genpts+igndts: タイムスタンプの修復
         # -max_interleave_delta 0: TSのパケット順序問題を無視
@@ -342,7 +370,7 @@ class FolloasConverterApp:
             "-probesize", "100M", "-analyzeduration", "100M",
             "-fflags", "+genpts+igndts",
             "-i", v_name,
-            "-vf", f"fps={actual_target_fps}",
+            "-vf", vf_opt,
             "-q:v", "2",
             "-max_interleave_delta", "0",
             "-err_detect", "ignore_err",
@@ -355,7 +383,7 @@ class FolloasConverterApp:
             "-f", "mjpeg",
             "-framerate", str(src_fps),
             "-i", v_name,
-            "-vf", f"fps={actual_target_fps}",
+            "-vf", vf_opt,
             "-q:v", "2",
             out_pattern
         ]
@@ -440,7 +468,7 @@ class FolloasConverterApp:
                         "-f", "mjpeg",
                         "-framerate", str(src_fps),
                         "-i", temp_mjpg,
-                        "-vf", f"fps={actual_target_fps}",
+                        "-vf", vf_opt,
                         "-q:v", "2",
                         out_pattern
                     ]
@@ -499,7 +527,7 @@ class FolloasConverterApp:
                 try: os.remove(temp_jpg)
                 except: pass
 
-    def _sync_log(self, log_path: str, output_dir: str, total_frames_30fps: int):
+    def _sync_log(self, log_path: str, output_dir: str, total_frames_30fps: int, is_rotated: bool = False):
         if not os.path.exists(log_path):
             return
 
@@ -594,8 +622,22 @@ class FolloasConverterApp:
 
                 # ご指示通りのフラットな数値CSVフォーマットで書き出し
                 if selected_vals:
+                    vals_list = selected_vals.split(',')
+                    if is_rotated:
+                        # FolloasAnalyze の描画基準(720)に合わせて座標を反転
+                        for i in range(0, len(vals_list), 6):
+                            if i + 5 < len(vals_list):
+                                try:
+                                    x = int(vals_list[i+1])
+                                    y = int(vals_list[i+2])
+                                    w = int(vals_list[i+3])
+                                    h = int(vals_list[i+4])
+                                    vals_list[i+1] = str(720 - (x + w))
+                                    vals_list[i+2] = str(720 - (y + h))
+                                except ValueError:
+                                    pass
                     # 例: [1741, 132401, 0.25, 223, 363, 207, 222, 45954, ...]
-                    row = [frame_idx, selected_time] + selected_vals.split(',')
+                    row = [frame_idx, selected_time] + vals_list
                 else:
                     # 認識がゼロの場合はフレーム番号と時間だけ出力
                     row = [frame_idx, selected_time]

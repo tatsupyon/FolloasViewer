@@ -1,0 +1,85 @@
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>FolloasViewer_Manual</title>
+    <style>
+        body { font-family: sans-serif; line-height: 1.6; padding: 20px; max-width: 800px; margin: 0 auto; }
+        table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; }
+        th { background-color: #f2f2f2; }
+        code { background-color: #f4f4f4; padding: 2px 4px; border-radius: 4px; }
+        pre { background-color: #f4f4f4; padding: 10px; border-radius: 4px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+<h1>Folloas キャプチャ画像 VIEWER 操作マニュアル</h1>
+<p>対応バージョン: V1.65〜
+動作環境: Python 3.14.4</p>
+<h2>1. はじめに（設計思想）</h2>
+<p>本ツールは、AI（AICPU）による画像認識結果と、複数のライブ映像（Live1/Live2）を統合して視覚的に確認・分析するための専用ビューアです。</p>
+<h3>同期と妥当性に関する考え方</h3>
+<ul>
+<li><strong>Live1基準のタイムライン</strong>: 全てのデータは Live1 映像（30fps）のフレーム番号を基準（0スタート）として同期されます。</li>
+<li><strong>位相差（ゆらぎ）の許容</strong>: ログはAICPU内部のタイミングで出力され、Live2は元々25fpsの動画であるため、厳密に1フレームも狂わない同期は困難です。結果として、<strong>±1フレーム前後のズレが発生する可能性</strong> を考慮してViewing（妥当性確認）を行ってください。</li>
+<li><strong>高速な分析環境</strong>: 変換処理（Converter）によって全てのフレームを静止画化しているため、PCやメディア（USBメモリ等）の性能に依存しますが、動画ファイルでは困難な高速シークとコマ送りが可能です。</li>
+</ul>
+<h2>2. 画面構成と基本操作</h2>
+<ul>
+<li><strong>画面配置</strong>: 左から「解析画面（メタ情報）」「Live1画面（基準）」「Live2画面」の3画面構成です。</li>
+<li><strong>再生コントロール</strong>:<ul>
+<li><strong>[再生] / [停止]</strong>: 自動コマ送り再生。</li>
+<li><strong>[コマ送り ▶] / [◀ コマ戻し]</strong>: 1フレームずつの詳細確認。</li>
+<li><strong>タイムラインクリック</strong>: バーをクリックまたはドラッグすることで、任意のシーンへジャンプ。</li>
+<li><strong>フレーム指定</strong>: フレーム入力欄に数値を入力して <strong>Enterキー</strong> で特定フレームへジャンプ。</li>
+</ul>
+</li>
+<li><strong>フォルダの直接起動</strong>:<ul>
+<li><code>python FolloasViewer.py "フォルダパス"</code> のように引数を渡して起動すると、指定したフォルダを即座に開きます。</li>
+</ul>
+</li>
+</ul>
+<h2>3. 解析表示とSCORE閾値</h2>
+<ul>
+<li><strong>SCORE閾値の変更</strong>:<ul>
+<li>画面左下の <strong>「SCORE閾値=」</strong> の右側にあるテキストボックスに数値を入力し、<strong>Enterキー</strong> を押すと反映されます。</li>
+<li>キーボードの <strong>[↑] / [↓]</strong> キーでも 0.05 刻みで調整可能です。</li>
+</ul>
+</li>
+<li><strong>認識枠（矩形）の描画</strong>:<ul>
+<li><strong>赤枠</strong>: 設定された SCORE 閾値 <strong>以上</strong> の認識結果。</li>
+<li><strong>青枠</strong>: 設定された SCORE 閾値 <strong>未満</strong> の認識結果。</li>
+</ul>
+</li>
+<li>
+<p><strong>LIVE2枠チェックボックス</strong>: チェックを入れると映像上に認識枠を表示します。この設定は <code>viewer.ini</code> に保存されます。</p>
+</li>
+<li>
+<p><strong>解析メッセージとスコアの表示</strong>:</p>
+<ul>
+<li><strong>上部メッセージ</strong>: 解析画面（左）の上部に、認識された物体の「スコア」「座標」「サイズ」「タイムスタンプ」がリスト表示されます。</li>
+<li><strong>枠上のスコア</strong>: 各認識枠の左上にスコア（例: 0.85）が表示されます。枠が画面上端にある場合は、自動的に枠の下側に表示されます。</li>
+<li><strong>フォント</strong>: 視認性の高い <code>Lucida Console</code> を採用しています。</li>
+</ul>
+</li>
+</ul>
+<h2>4. 設定の保存（viewer.ini）</h2>
+<p><strong>[設定記録]</strong> ボタンを押すと、現在のフォルダ内に <code>viewer.ini</code> が作成され、次回読み込み時に自動反映されます。ラベル（キー）が英字で記録されるため、環境によらず確実に読み込まれます。
+*   <strong>SCORE_THRESHOLD</strong>: 赤枠/青枠の判定基準。
+*   <strong>ANALYSIS_PHASE</strong>: 映像と認識枠のズレ補正値。
+*   <strong>LIVE2_PHASE</strong>: Live1とLive2の映像間のズレ補正値。
+*   <strong>SHOW_LIVE1_BOX</strong>: Live1画像上への枠表示のON/OFF。
+*   <strong>CUT_RANGES</strong>: 編集で設定したカット箇所。</p>
+<h2>5. カット編集とエクスポート</h2>
+<p>分析に不要なシーンを除外したり、逆にカットを取り消したりできます。
+1.  <strong>モード選択</strong>:
+    *   <strong>☑ CUT (ON)</strong>: 新しくカット区間を設定する場合に使用します。
+    *   <strong>□ CUT (OFF)</strong>: 既にカットされた（赤色になった）区間を元に戻す場合に使用します。
+2.  <strong>範囲の指定</strong>:
+    *   <strong>[ START ]</strong>: 現在のフレームを開始点としてマークします。タイムライン上にプレビュー（暗い赤または緑）が表示されます。※再度押すとキャンセルできます。
+    *   <strong>[ END ]</strong>: 現在のフレームを終了点として確定します。
+3.  <strong>[ EXPORT ]</strong>: 
+    *   カットされた区間を除外した統合動画（mp4）と、集計ログデータ（<code>head.log</code>, <code>head2.csv</code>, <code>output.csv</code>）を <code>_Edit</code> フォルダに生成します。
+    *   <strong>動画への焼き込み</strong>: EXPORTされた動画には、Viewing時と同じ形式でスコア情報が焼き込まれます。
+    *   <code>head2.csv</code> は集計ツールに適した、重複のないクリーンな形式で出力されます。</p>
+</body>
+</html>
